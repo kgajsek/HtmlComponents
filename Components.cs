@@ -46,6 +46,18 @@ namespace WebAPI {
                 this.Components.Add (component ());
             }
         }
+        public void UnregisterAllComponents () {
+            var garbage = this.Components;
+            this.Components = new List<HtmlComponent> ();
+            garbage.ForEach (g => g.UnregisterAllComponents ());
+        }
+        public void UnregisterComponent (string tag) {
+            var garbage = this.Components.FirstOrDefault (c => c.Tag == tag);
+            this.Components = this.Components.Where (c => c.Tag != tag).ToList ();
+            if (garbage != null) {
+                garbage.UnregisterAllComponents ();
+            }
+        }
 
         public HtmlComponent () {
             this.ID = "c" + Guid.NewGuid().ToString ().Split ('-') [0];
