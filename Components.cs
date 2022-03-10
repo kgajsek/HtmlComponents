@@ -4,6 +4,7 @@ namespace WebAPI {
     using System;
     using System.Collections.Generic;
     using System.Linq;
+    using System.Web;
 
     public class NodeContent {
         public string ID { get; set; }
@@ -38,12 +39,18 @@ namespace WebAPI {
         public string NodeType { get; set; }
         public string LastHash { get; set; }
         public bool IsMain { get; set; }
+
+        public static Func<string,string> TranslationFunction = null;
         
         private List<HtmlComponent> Components { get; set; }
         public void RegisterComponent (string tag, Func<HtmlComponent> component) {
             var existing = this.Components.FirstOrDefault (c => c.Tag == tag);
             if (existing == null) {
-                this.Components.Add (component ());
+                var comp = component ();
+                if (comp.Tag != tag) {
+                    throw new ApplicationException ("RegisterComponent: Tag mismatch: " + comp.Tag + " vs. " + tag);
+                }
+                this.Components.Add (comp);
             }
         }
         public void UnregisterAllComponents () {
@@ -70,12 +77,26 @@ namespace WebAPI {
             return null;
         }
 
-        public virtual string TagRender () {
-            if (IsMain || string.IsNullOrWhiteSpace (this.NodeType)) {
-                return this.Render ();
+        public virtual string TagRender (bool dropTopDiv = false) {
+            if (dropTopDiv || IsMain || string.IsNullOrWhiteSpace (this.NodeType)) {
+                return Translate (this.Render ());
             } else {
-                return "<" + this.NodeType + " id='" + this.ID + "'>" + this.Render () + "</" + this.NodeType + ">";
+                return "<" + this.NodeType + " id='" + this.ID + "'>" + Translate (this.Render ()) + "</" + this.NodeType + ">";
             }
+        }
+
+        private string Translate (string html) {
+            if ((TranslationFunction != null) && !string.IsNullOrWhiteSpace (html)) {
+                var tagPrefix = "{{T:";
+                while (html.Contains (tagPrefix)) {
+                    var startPos = html.IndexOf (tagPrefix) + tagPrefix.Length;
+                    var endPos = html.Substring (startPos).IndexOf ("}}");
+                    var tag = html.Substring (startPos, endPos);
+                    var translation = TranslationFunction (tag);
+                    html = html.Replace ("{{T:" + tag + "}}", translation);
+                }
+            }
+            return html;
         }
 
         private bool HasChanged () {
@@ -107,22 +128,26 @@ namespace WebAPI {
             });
         }
 
-        public string FullHtml () {
-            var baseHtml = TagRender ();
+        public string FullHtml (bool dropTopDiv = false) {
+            var baseHtml = TagRender (dropTopDiv);
             this.LastHash = baseHtml;
             var finalHtml = SubRender (baseHtml);
             return finalHtml;
         }
 
         public List<NodeContent> DiffHtml () {
+            if (!this.IsMain) { throw new ApplicationException ("Diff render only possible on main component!"); }
             var ncs = new List<NodeContent> ();
             if (this.HasChanged ()) {
-                ncs.Add (new NodeContent { ID = this.ID, Content = this.FullHtml () });
-                return ncs;
+                ncs.Add (new NodeContent { ID = "main", Content = this.FullHtml (true) });
             } else {
                 SubScan (ncs);
-                return ncs;
             }
+            return ncs;
         }
+        
+        public static string Enc (string html) {
+            return HttpUtility.HtmlEncode (html);
+        }        
     }
 }
