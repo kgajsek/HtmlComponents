@@ -11,28 +11,6 @@ namespace WebAPI {
         public string Content { get; set; }
     }
 
-    public class HtmlComponents {
-        private Dictionary<string, HtmlComponent> dict = new Dictionary<string, HtmlComponent> ();
-
-        public void Add (string tag, HtmlComponent c) {
-            dict [tag] = c;
-        }
-
-        public HtmlComponent Get (string key) {
-            return dict [key];
-        }
-
-        public List<string> Keys {
-            get {
-                var l = new List<string> (dict.Count);
-                foreach (string k in dict.Keys) {
-                    l.Add (k);
-                }
-                return l;
-            }            
-        }
-    }
-
     public class HtmlComponent {
         public string ID { get; set; }
         public string Tag { get; set; }
@@ -148,6 +126,16 @@ namespace WebAPI {
         
         public static string Enc (string html) {
             return HttpUtility.HtmlEncode (html);
-        }        
+        }
+
+        public HtmlComponent Find (string tag) {
+            var comp = this.Components.FirstOrDefault (c => c.Tag == tag);
+            if (comp != null) { return comp; }
+            foreach (var c in this.Components) {
+                var sc = c.Find (tag);
+                if (sc != null) { return sc; }
+            }
+            return null;
+        }
     }
 }
