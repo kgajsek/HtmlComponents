@@ -19,34 +19,42 @@ namespace WebAPI {
         public bool IsMain { get; set; }
 
         public static Func<string,string> TranslationFunction = null;
-        
+
+        private static object syncLock = new object ();
         private List<HtmlComponent> Components { get; set; }
+
         public void RegisterComponent (string tag, Func<HtmlComponent> component) {
-            var existing = this.Components.FirstOrDefault (c => c.Tag == tag);
-            if (existing == null) {
-                var comp = component ();
-                if (comp.Tag != tag) {
-                    throw new ApplicationException ("RegisterComponent: Tag mismatch: " + comp.Tag + " vs. " + tag);
+            lock (syncLock) {
+                var existing = this.Components.FirstOrDefault (c => c.Tag == tag);
+                if (existing == null) {
+                    var comp = component ();
+                    if (comp.Tag != tag) {
+                        throw new ApplicationException ("RegisterComponent: Tag mismatch: " + comp.Tag + " vs. " + tag);
+                    }
+                    this.Components.Add (comp);
                 }
-                this.Components.Add (comp);
             }
         }
         public void UnregisterAllComponents () {
-            var garbage = this.Components;
-            this.Components = new List<HtmlComponent> ();
-            garbage.ForEach (g => g.UnregisterAllComponents ());
+            lock (syncLock) {
+                var garbage = this.Components;
+                this.Components = new List<HtmlComponent> (32);
+                garbage.ForEach (g => g.UnregisterAllComponents ());
+            }
         }
         public void UnregisterComponent (string tag) {
-            var garbage = this.Components.FirstOrDefault (c => c.Tag == tag);
-            this.Components = this.Components.Where (c => c.Tag != tag).ToList ();
-            if (garbage != null) {
-                garbage.UnregisterAllComponents ();
+            lock (syncLock) {
+                var garbage = this.Components.FirstOrDefault (c => c.Tag == tag);
+                this.Components = this.Components.Where (c => c.Tag != tag).ToList ();
+                if (garbage != null) {
+                    garbage.UnregisterAllComponents ();
+                }
             }
         }
 
         public HtmlComponent () {
             this.ID = "c" + Guid.NewGuid().ToString ().Split ('-') [0];
-            this.Components = new List<HtmlComponent> ();
+            this.Components = new List<HtmlComponent> (32);
             this.NodeType = "div";
             this.IsMain = false;
         }
@@ -82,28 +90,44 @@ namespace WebAPI {
         }
 
         private string SubRender (string baseHtml) {
-            var finalHtml = baseHtml;
-            this.Components.ForEach (c => {
-                if (finalHtml.Contains ("{{" + c.Tag + "}}")) {
-                    var r = c.TagRender ();
-                    c.LastHash = r;
-                    finalHtml = finalHtml.Replace ("{{" + c.Tag + "}}", r);
-                    finalHtml = c.SubRender (finalHtml);
-                } else {
-                    c.LastHash = "";
-                }
-            });            
-            return finalHtml;
+            lock (syncLock) {
+                var finalHtml = baseHtml;
+                this.Components.ForEach (c => {
+                    if (finalHtml.Contains ("{{" + c.Tag + "}}")) {
+                        var r = c.TagRender ();
+                        c.LastHash = r;
+                        finalHtml = finalHtml.Replace ("{{" + c.Tag + "}}", r);
+                        finalHtml = c.SubRender (finalHtml);
+                    } else {
+                        c.LastHash = "";
+                    }
+                });
+                return finalHtml;
+            }
         }
 
         private void SubScan (List<NodeContent> ncs) {
-            this.Components.ForEach (c => {
-                if (c.HasChanged ()) {
-                    ncs.Add (new NodeContent { ID = c.ID, Content = c.FullHtml () });
-                } else {
-                    c.SubScan (ncs);
-                }
-            });
+            lock (syncLock) {
+                this.Components.ForEach (c => {
+                    var startTime = DateTime.UtcNow;
+                    char mode = ' ';
+                    try {
+                        if (c.HasChanged ()) {
+                            mode = 'F';
+                            ncs.Add (new NodeContent { ID = c.ID, Content = c.FullHtml () });
+                        } else {
+                            mode = 'S';
+                            c.SubScan (ncs);
+                        }
+                    } finally {
+                        var endTime = DateTime.UtcNow;
+                        var diffTime = endTime - startTime;
+                        if (diffTime.TotalMilliseconds > 1000) {
+                            Log.Write ("WARNING: " + c.Tag + " rendering [" + mode + "] takes " + diffTime.ToString () + "!");
+                        }
+                    }
+                });
+            }
         }
 
         public string FullHtml (bool dropTopDiv = false) {
